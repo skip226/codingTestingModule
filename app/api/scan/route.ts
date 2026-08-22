@@ -1,90 +1,47 @@
 import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import mammoth from 'mammoth';
 import OpenAI from 'openai';
 import pdf from 'pdf-parse';
+import { countUnresolvedAnswers, parseQuestions, type ParsedQuestion } from '../../../lib/testforge-parser';
 
 export const runtime = 'nodejs';
 
-type ParsedQuestion = {
-  id: string;
-  prompt: string;
-  options: string[];
-  correctIndex: number;
-  explanation: string;
-  topic: string;
-};
+const MAX_SCAN_BYTES = 25 * 1024 * 1024;
+const MAX_MULTIPART_OVERHEAD_BYTES = 1024 * 1024;
 
 type GenerationDifficulty = 'beginner' | 'intermediate' | 'advanced';
 type ImportMode = 'smart' | 'extract' | 'generate';
 
-function cleanOption(value: string) {
-  return value.replace(/^\s*(?:[A-Da-d][\).:-]|\d+[\).:-])\s*/, '').trim();
+function json(data: unknown, status = 200) {
+  return NextResponse.json(data, {
+    status,
+    headers: {
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff'
+    }
+  });
 }
 
-function parseQuestions(text: string): ParsedQuestion[] {
-  const normalized = text.replace(/\r/g, '').replace(/\t/g, ' ');
-  const blocks = normalized
-    .split(/\n(?=(?:Question\s+)?\d+[\).:-]\s*)/i)
-    .map((block) => block.trim())
-    .filter(Boolean);
+async function authenticateRequest(request: Request) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return { error: json({ error: 'Authentication is not configured on the server.' }, 503) };
 
-  const questions: ParsedQuestion[] = [];
+  const authorization = request.headers.get('authorization') || '';
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (!match) return { error: json({ error: 'Sign in before scanning lesson material.' }, 401) };
 
-  for (const block of blocks) {
-    const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
-    if (lines.length < 3) continue;
-
-    const prompt = lines[0].replace(/^(?:Question\s+)?\d+[\).:-]\s*/i, '').trim();
-    const optionLines = lines.filter((line) => /^[A-Da-d][\).:-]\s+/.test(line));
-    if (optionLines.length < 2) continue;
-
-    const answerLine = lines.find((line) => /^(?:answer|correct answer)\s*[:\-]/i.test(line));
-    const explanationLine = lines.find((line) => /^explanation\s*[:\-]/i.test(line));
-    const topicLine = lines.find((line) => /^topic\s*[:\-]/i.test(line));
-    const options = optionLines.map(cleanOption);
-
-    let correctIndex = 0;
-    if (answerLine) {
-      const raw = answerLine.replace(/^(?:answer|correct answer)\s*[:\-]\s*/i, '').trim();
-      const letterMatch = raw.match(/^([A-Da-d])\b/);
-      if (letterMatch) correctIndex = letterMatch[1].toUpperCase().charCodeAt(0) - 65;
-      else {
-        const found = options.findIndex((option) => option.toLowerCase() === cleanOption(raw).toLowerCase());
-        if (found >= 0) correctIndex = found;
-      }
+  const client = createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false
     }
-
-    questions.push({
-      id: crypto.randomUUID(),
-      prompt,
-      options,
-      correctIndex: Math.min(Math.max(correctIndex, 0), options.length - 1),
-      explanation: explanationLine
-        ? explanationLine.replace(/^explanation\s*[:\-]\s*/i, '').trim()
-        : 'Review this answer against the source material before publishing the test.',
-      topic: topicLine ? topicLine.replace(/^topic\s*[:\-]\s*/i, '').trim() || 'General' : 'General'
-    });
-  }
-
-  if (questions.length) return questions;
-
-  const compact = normalized.split('\n').map((line) => line.trim()).filter(Boolean);
-  for (let index = 0; index < compact.length; index++) {
-    const line = compact[index];
-    if (!line.endsWith('?')) continue;
-    const candidates = compact.slice(index + 1, index + 5).filter((candidate) => /^[A-Da-d][\).:-]\s+/.test(candidate));
-    if (candidates.length < 2) continue;
-    questions.push({
-      id: crypto.randomUUID(),
-      prompt: line,
-      options: candidates.map(cleanOption),
-      correctIndex: 0,
-      explanation: 'The scanner could not confidently detect the answer key. Review this question before publishing.',
-      topic: 'General'
-    });
-  }
-
-  return questions;
+  });
+  const { data, error } = await client.auth.getUser(match[1]);
+  if (error || !data.user) return { error: json({ error: 'Your session is invalid or expired. Sign in again.' }, 401) };
+  return { userId: data.user.id };
 }
 
 function normalizeQuestionCount(value: FormDataEntryValue | null) {
@@ -193,53 +150,70 @@ async function generateAssessment(text: string, count: number, difficulty: Gener
 
 export async function POST(request: Request) {
   try {
+    const auth = await authenticateRequest(request);
+    if ('error' in auth) return auth.error;
+
+    const contentLength = Number(request.headers.get('content-length') || 0);
+    if (contentLength > MAX_SCAN_BYTES + MAX_MULTIPART_OVERHEAD_BYTES) {
+      return json({ error: 'Files larger than 25 MB cannot be scanned.' }, 413);
+    }
+
     const formData = await request.formData();
     const file = formData.get('file');
-    if (!(file instanceof File)) return NextResponse.json({ error: 'No file was provided.' }, { status: 400 });
+    if (!(file instanceof File)) return json({ error: 'No file was provided.' }, 400);
+    if (file.size > MAX_SCAN_BYTES) return json({ error: 'Files larger than 25 MB cannot be scanned.' }, 413);
+
+    const name = file.name.toLowerCase();
+    const supported = name.endsWith('.pdf') || name.endsWith('.docx') || name.endsWith('.txt') || name.endsWith('.md');
+    if (!supported) return json({ error: 'Supported file types: PDF, DOCX, TXT, and MD.' }, 415);
 
     const mode = normalizeMode(formData.get('mode'));
     const questionCount = normalizeQuestionCount(formData.get('questionCount'));
     const difficulty = normalizeDifficulty(formData.get('difficulty'));
     const buffer = Buffer.from(await file.arrayBuffer());
-    const name = file.name.toLowerCase();
     let text = '';
 
     if (name.endsWith('.pdf')) text = (await pdf(buffer)).text;
     else if (name.endsWith('.docx')) text = (await mammoth.extractRawText({ buffer })).value;
-    else if (name.endsWith('.txt') || name.endsWith('.md')) text = buffer.toString('utf8');
-    else return NextResponse.json({ error: 'Supported file types: PDF, DOCX, TXT, and MD.' }, { status: 415 });
+    else text = buffer.toString('utf8');
 
-    if (!text.trim()) return NextResponse.json({ error: 'No readable text could be extracted from this file.' }, { status: 422 });
+    if (!text.trim()) return json({ error: 'No readable text could be extracted from this file.' }, 422);
 
     const extractedQuestions = parseQuestions(text);
+    const unresolvedAnswers = countUnresolvedAnswers(extractedQuestions);
+    const unresolvedWarning = unresolvedAnswers > 0
+      ? `${unresolvedAnswers} question${unresolvedAnswers === 1 ? '' : 's'} do not have a reliable answer key. Choose the correct answer for each before saving.`
+      : null;
 
     if (mode === 'extract' || (mode === 'smart' && extractedQuestions.length >= 2)) {
-      return NextResponse.json({
+      return json({
         fileName: file.name,
         title: file.name.replace(/\.[^.]+$/, ''),
         extractedTextLength: text.length,
         sourceMode: 'extracted',
         questions: extractedQuestions,
-        warning: extractedQuestions.length === 0 ? 'No structured multiple-choice questions were detected.' : null
+        unresolvedAnswers,
+        warning: extractedQuestions.length === 0 ? 'No structured multiple-choice questions were detected.' : unresolvedWarning
       });
     }
 
     if (!process.env.OPENAI_API_KEY) {
       if (mode === 'smart') {
-        return NextResponse.json({
+        return json({
           fileName: file.name,
           title: file.name.replace(/\.[^.]+$/, ''),
           extractedTextLength: text.length,
           sourceMode: 'unavailable',
           questions: extractedQuestions,
+          unresolvedAnswers,
           warning: 'This file looks like lesson material rather than a formatted test. Add OPENAI_API_KEY on the server to enable automatic lesson-to-test generation.'
         });
       }
-      return NextResponse.json({ error: 'AI generation is not configured. Add OPENAI_API_KEY to the server environment.' }, { status: 503 });
+      return json({ error: 'AI generation is not configured. Add OPENAI_API_KEY to the server environment.' }, 503);
     }
 
     const generated = await generateAssessment(text, questionCount, difficulty, file.name);
-    return NextResponse.json({
+    return json({
       fileName: file.name,
       title: generated.title,
       extractedTextLength: text.length,
@@ -247,14 +221,15 @@ export async function POST(request: Request) {
       difficulty,
       requestedQuestionCount: questionCount,
       questions: generated.questions,
+      unresolvedAnswers: 0,
       warning: generated.questions.length < questionCount ? `Generated ${generated.questions.length} usable questions. Review them before saving.` : null
     });
   } catch (error) {
-    console.error(error);
+    console.error('TestForge scan failed', error);
     const message = error instanceof Error ? error.message : '';
     if (message === 'OPENAI_API_KEY_MISSING') {
-      return NextResponse.json({ error: 'AI generation is not configured. Add OPENAI_API_KEY to the server environment.' }, { status: 503 });
+      return json({ error: 'AI generation is not configured. Add OPENAI_API_KEY to the server environment.' }, 503);
     }
-    return NextResponse.json({ error: message || 'The file could not be scanned.' }, { status: 500 });
+    return json({ error: message || 'The file could not be scanned.' }, 500);
   }
 }
