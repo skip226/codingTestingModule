@@ -1,7 +1,19 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { BookOpen, Check, ChevronRight, FileUp, GraduationCap, History, Pencil, Plus, X } from 'lucide-react';
+import {
+  BookOpen,
+  Check,
+  ChevronRight,
+  FileSearch,
+  FileUp,
+  GraduationCap,
+  History,
+  Pencil,
+  Plus,
+  Sparkles,
+  X
+} from 'lucide-react';
 
 type Question = {
   id: string;
@@ -34,6 +46,9 @@ type ClassSection = {
   id: string;
   name: string;
 };
+
+type ScanMode = 'smart' | 'extract' | 'generate';
+type Difficulty = 'beginner' | 'intermediate' | 'advanced';
 
 const starterClasses: ClassSection[] = [
   { id: 'class-1', name: 'CompTIA A+' },
@@ -95,6 +110,10 @@ export default function HomePage() {
   const [scanTitle, setScanTitle] = useState('Imported Test');
   const [scanning, setScanning] = useState(false);
   const [scanMessage, setScanMessage] = useState('');
+  const [scanSource, setScanSource] = useState('');
+  const [scanMode, setScanMode] = useState<ScanMode>('smart');
+  const [questionCount, setQuestionCount] = useState(10);
+  const [difficulty, setDifficulty] = useState<Difficulty>('intermediate');
 
   useEffect(() => {
     if (!classes.some((item) => item.id === activeClassId) && classes[0]) setActiveClassId(classes[0].id);
@@ -125,7 +144,10 @@ export default function HomePage() {
 
   function gradeTest() {
     if (!runningTest) return;
-    const score = runningTest.questions.reduce((total, question, index) => total + (answers[index] === question.correctIndex ? 1 : 0), 0);
+    const score = runningTest.questions.reduce(
+      (total, question, index) => total + (answers[index] === question.correctIndex ? 1 : 0),
+      0
+    );
     const attempt: Attempt = {
       id: crypto.randomUUID(),
       testId: runningTest.id,
@@ -142,16 +164,39 @@ export default function HomePage() {
 
   async function scanFile(file: File) {
     setScanning(true);
-    setScanMessage('Scanning file and looking for structured questions…');
+    setScanQuestions([]);
+    setScanSource('');
+    setScanMessage(
+      scanMode === 'generate'
+        ? 'Reading the lesson and generating a new assessment…'
+        : scanMode === 'extract'
+          ? 'Scanning the file for existing questions and answer keys…'
+          : 'Scanning the file. TestForge will extract existing questions or generate a new test when needed…'
+    );
+
     const data = new FormData();
     data.append('file', file);
+    data.append('mode', scanMode);
+    data.append('questionCount', String(questionCount));
+    data.append('difficulty', difficulty);
+
     try {
       const response = await fetch('/api/scan', { method: 'POST', body: data });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Scan failed');
-      setScanQuestions(result.questions || []);
-      setScanTitle(file.name.replace(/\.[^.]+$/, '') || 'Imported Test');
-      setScanMessage(result.questions?.length ? `Found ${result.questions.length} questions. Review them before saving.` : result.warning || 'No questions found.');
+
+      const questions = (result.questions || []) as Question[];
+      setScanQuestions(questions);
+      setScanSource(result.sourceMode || '');
+      setScanTitle(result.title || file.name.replace(/\.[^.]+$/, '') || 'Imported Test');
+
+      if (questions.length) {
+        const method = result.sourceMode === 'generated' ? 'AI generated' : 'extracted';
+        const warning = result.warning ? ` ${result.warning}` : '';
+        setScanMessage(`${questions.length} questions ${method}. Review every question before saving.${warning}`);
+      } else {
+        setScanMessage(result.warning || 'No questions were found. Try Smart or AI Generate mode for lesson material.');
+      }
     } catch (error) {
       setScanMessage(error instanceof Error ? error.message : 'The file could not be scanned.');
     } finally {
@@ -160,7 +205,9 @@ export default function HomePage() {
   }
 
   function updateQuestion(index: number, patch: Partial<Question>) {
-    setScanQuestions(scanQuestions.map((question, itemIndex) => itemIndex === index ? { ...question, ...patch } : question));
+    setScanQuestions(
+      scanQuestions.map((question, itemIndex) => itemIndex === index ? { ...question, ...patch } : question)
+    );
   }
 
   function saveImportedTest() {
@@ -174,12 +221,17 @@ export default function HomePage() {
     };
     setTests([next, ...tests]);
     setScanQuestions([]);
+    setScanSource('');
     setScanMessage('Test saved to this class.');
     setActiveView('dashboard');
   }
 
   if (runningTest) {
-    const currentScore = runningTest.questions.reduce((total, question, index) => total + (answers[index] === question.correctIndex ? 1 : 0), 0);
+    const currentScore = runningTest.questions.reduce(
+      (total, question, index) => total + (answers[index] === question.correctIndex ? 1 : 0),
+      0
+    );
+
     return (
       <main className="exam-shell">
         <header className="exam-header">
@@ -209,9 +261,10 @@ export default function HomePage() {
                   const className = graded
                     ? selected && isCorrect ? 'answer correct selected'
                       : selected && !isCorrect ? 'answer incorrect selected'
-                      : isCorrect ? 'answer correct'
-                      : 'answer'
+                        : isCorrect ? 'answer correct'
+                          : 'answer'
                     : selected ? 'answer selected' : 'answer';
+
                   return (
                     <button
                       className={className}
@@ -254,12 +307,17 @@ export default function HomePage() {
         <nav>
           <button className={activeView === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveView('dashboard')}><BookOpen size={18} /> Classes</button>
           <button className={activeView === 'history' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveView('history')}><History size={18} /> Completed tests</button>
-          <button className={activeView === 'scan' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveView('scan')}><FileUp size={18} /> Import test</button>
+          <button className={activeView === 'scan' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveView('scan')}><Sparkles size={18} /> Import / Generate</button>
         </nav>
+
         <div className="sidebar-section">
           <div className="sidebar-heading"><span>Your classes</span><button onClick={addClass}><Plus size={16} /></button></div>
           {classes.map((item) => (
-            <button key={item.id} className={item.id === activeClassId ? 'class-link active' : 'class-link'} onClick={() => { setActiveClassId(item.id); setActiveView('dashboard'); }}>
+            <button
+              key={item.id}
+              className={item.id === activeClassId ? 'class-link active' : 'class-link'}
+              onClick={() => { setActiveClassId(item.id); setActiveView('dashboard'); }}
+            >
               <span className="class-dot" />{item.name}
             </button>
           ))}
@@ -275,8 +333,12 @@ export default function HomePage() {
         {activeView === 'dashboard' && (
           <>
             <section className="hero-card">
-              <div><span className="eyebrow">Current class</span><h2>{currentClass?.name || 'Create a class'}</h2><p>Keep lessons, generated tests, and completed attempts organized in one place.</p></div>
-              <button className="primary-button" onClick={() => setActiveView('scan')}><FileUp size={18} /> Import a test</button>
+              <div>
+                <span className="eyebrow">Current class</span>
+                <h2>{currentClass?.name || 'Create a class'}</h2>
+                <p>Keep lessons, generated tests, and completed attempts organized in one place.</p>
+              </div>
+              <button className="primary-button" onClick={() => setActiveView('scan')}><Sparkles size={18} /> Build a test from file</button>
             </section>
 
             <section className="content-section">
@@ -301,7 +363,10 @@ export default function HomePage() {
             <div className="history-list">
               {attempts.map((attempt) => (
                 <article className="history-row" key={attempt.id}>
-                  <div><strong>{attempt.title}</strong><span>{classes.find((item) => item.id === attempt.classId)?.name} · {new Date(attempt.completedAt).toLocaleDateString()}</span></div>
+                  <div>
+                    <strong>{attempt.title}</strong>
+                    <span>{classes.find((item) => item.id === attempt.classId)?.name} · {new Date(attempt.completedAt).toLocaleDateString()}</span>
+                  </div>
                   <div className="history-score">{Math.round((attempt.score / attempt.total) * 100)}%</div>
                 </article>
               ))}
@@ -312,32 +377,103 @@ export default function HomePage() {
 
         {activeView === 'scan' && (
           <section className="content-section scan-section">
-            <div className="section-header"><div><span className="eyebrow">Automatic import</span><h2>Scan lesson or test file</h2></div></div>
-            <label className="dropzone">
-              <FileUp size={30} />
-              <strong>{scanning ? 'Scanning…' : 'Choose a PDF, DOCX, TXT, or Markdown file'}</strong>
-              <span>The scanner extracts structured multiple-choice questions and answer keys when present.</span>
+            <div className="section-header">
+              <div><span className="eyebrow">Smart assessment builder</span><h2>Turn a lesson or test into an assessment</h2></div>
+            </div>
+
+            <div className="generation-controls">
+              <div className="generation-intro">
+                <div className="generation-icon"><Sparkles size={20} /></div>
+                <div>
+                  <strong>Choose how TestForge should read the file</strong>
+                  <span>Smart mode preserves existing tests and uses AI only when the upload is lesson material.</span>
+                </div>
+              </div>
+
+              <div className="control-grid">
+                <label className="control-field">
+                  <span>Import method</span>
+                  <select value={scanMode} onChange={(event) => setScanMode(event.target.value as ScanMode)} disabled={scanning}>
+                    <option value="smart">Smart — extract or generate</option>
+                    <option value="extract">Extract existing test only</option>
+                    <option value="generate">AI generate from lesson</option>
+                  </select>
+                </label>
+
+                <label className="control-field">
+                  <span>Questions</span>
+                  <select value={questionCount} onChange={(event) => setQuestionCount(Number(event.target.value))} disabled={scanning || scanMode === 'extract'}>
+                    <option value={5}>5 questions</option>
+                    <option value={10}>10 questions</option>
+                    <option value={15}>15 questions</option>
+                    <option value={20}>20 questions</option>
+                    <option value={30}>30 questions</option>
+                  </select>
+                </label>
+
+                <label className="control-field">
+                  <span>Difficulty</span>
+                  <select value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)} disabled={scanning || scanMode === 'extract'}>
+                    <option value="beginner">Beginner</option>
+                    <option value="intermediate">Intermediate</option>
+                    <option value="advanced">Advanced</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <label className={scanning ? 'dropzone busy' : 'dropzone'}>
+              {scanMode === 'generate' ? <Sparkles size={30} /> : <FileSearch size={30} />}
+              <strong>{scanning ? 'Building your assessment…' : 'Choose a PDF, DOCX, TXT, or Markdown file'}</strong>
+              <span>
+                {scanMode === 'extract'
+                  ? 'TestForge will look for numbered multiple-choice questions, answer keys, and explanations already present in the file.'
+                  : scanMode === 'generate'
+                    ? `TestForge will use the lesson material to create a ${questionCount}-question ${difficulty} assessment.`
+                    : 'TestForge will first look for an existing test. If none is found, it will create a new assessment from the lesson material.'}
+              </span>
               <input type="file" accept=".pdf,.docx,.txt,.md" disabled={scanning} onChange={(event) => event.target.files?.[0] && scanFile(event.target.files[0])} />
             </label>
+
             {scanMessage && <p className="scan-message">{scanMessage}</p>}
 
             {scanQuestions.length > 0 && (
               <div className="review-panel">
                 <div className="review-toolbar">
-                  <div><span className="eyebrow">Review before saving</span><input className="title-input" value={scanTitle} onChange={(event) => setScanTitle(event.target.value)} /></div>
+                  <div>
+                    <div className="review-meta">
+                      <span className="eyebrow">Review before saving</span>
+                      {scanSource && <span className={scanSource === 'generated' ? 'source-pill generated' : 'source-pill'}>{scanSource === 'generated' ? 'AI generated' : 'Extracted from file'}</span>}
+                    </div>
+                    <input className="title-input" value={scanTitle} onChange={(event) => setScanTitle(event.target.value)} />
+                  </div>
                   <button className="primary-button" onClick={saveImportedTest}>Save test</button>
                 </div>
+
                 {scanQuestions.map((question, questionIndex) => (
                   <article className="edit-question" key={question.id}>
                     <div className="edit-heading"><strong>Question {questionIndex + 1}</strong><Pencil size={16} /></div>
                     <textarea value={question.prompt} onChange={(event) => updateQuestion(questionIndex, { prompt: event.target.value })} />
                     {question.options.map((option, optionIndex) => (
                       <div className="edit-option" key={optionIndex}>
-                        <input type="radio" name={`correct-${question.id}`} checked={question.correctIndex === optionIndex} onChange={() => updateQuestion(questionIndex, { correctIndex: optionIndex })} />
-                        <input value={option} onChange={(event) => updateQuestion(questionIndex, { options: question.options.map((value, index) => index === optionIndex ? event.target.value : value) })} />
+                        <input
+                          type="radio"
+                          name={`correct-${question.id}`}
+                          checked={question.correctIndex === optionIndex}
+                          onChange={() => updateQuestion(questionIndex, { correctIndex: optionIndex })}
+                        />
+                        <input
+                          value={option}
+                          onChange={(event) => updateQuestion(questionIndex, {
+                            options: question.options.map((value, index) => index === optionIndex ? event.target.value : value)
+                          })}
+                        />
                       </div>
                     ))}
-                    <label className="explanation-editor">Explanation<textarea value={question.explanation} onChange={(event) => updateQuestion(questionIndex, { explanation: event.target.value })} /></label>
+                    <label className="explanation-editor">
+                      Explanation
+                      <textarea value={question.explanation} onChange={(event) => updateQuestion(questionIndex, { explanation: event.target.value })} />
+                    </label>
                   </article>
                 ))}
               </div>
