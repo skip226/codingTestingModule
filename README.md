@@ -25,8 +25,10 @@ TestForge is a modern virtual testing environment that converts uploaded lesson 
 - Visually mark correct answers and cross out incorrect selected answers
 - Show a brief explanation under each graded answer
 - Reopen any completed test for a read-only question-by-question review
+- Show attempt-specific missed-topic study targets during completed-test review
 - Retake a test directly from its completed review
 - Track weighted overall grade, average test score, questions answered, and recent score trend
+- Visualize the last eight completed scores chronologically
 - Compare grades across classes
 - Surface strongest topics and weakest study targets
 - Store per-question answer results for completed tests
@@ -48,12 +50,13 @@ The Analytics view calculates performance directly from saved tests and attempts
 - **Overall grade** is weighted by the number of questions answered.
 - **Average test score** treats each completed attempt as one score.
 - **Recent trend** compares the latest three completed tests with the previous three.
+- **Recent score chart** visualizes up to the last eight completed tests from oldest to newest.
 - **Class performance** shows weighted accuracy and test volume by class.
 - **Topic accuracy** groups answered questions by their saved topic label.
 - **Strongest topic** highlights the highest-accuracy concept.
 - **Best next study target** highlights the lowest-accuracy concept.
 
-Completed-test history rows are interactive. Opening one shows the original question, the student's selected answer, the correct answer, the saved explanation, and the question topic. Reviews are read-only and do not create another attempt unless the user explicitly chooses **Retake test**.
+Completed-test history rows are interactive. Opening one shows the original question, the student's selected answer, the correct answer, the saved explanation, and the question topic. The review also summarizes which topics were missed on that specific attempt so the user has an immediate study target. Reviews are read-only and do not create another attempt unless the user explicitly chooses **Retake test**.
 
 ## Lesson library
 
