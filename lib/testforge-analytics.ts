@@ -16,12 +16,21 @@ export type TopicPerformance = {
   accuracy: number;
 };
 
+export type RecentScore = {
+  attemptId: string;
+  title: string;
+  classId: string;
+  score: number;
+  completedAt: string;
+};
+
 export type PerformanceAnalytics = {
   overallGrade: number;
   averageTestScore: number;
   testsTaken: number;
   questionsAnswered: number;
   recentTrend: number;
+  recentScores: RecentScore[];
   classPerformance: ClassPerformance[];
   topicPerformance: TopicPerformance[];
   strongestTopic: TopicPerformance | null;
@@ -94,6 +103,17 @@ export function buildPerformanceAnalytics(
   const recentAverage = recent.length ? recent.reduce((sum, value) => sum + value, 0) / recent.length : 0;
   const previousAverage = previous.length ? previous.reduce((sum, value) => sum + value, 0) / previous.length : recentAverage;
 
+  const recentScores: RecentScore[] = attempts
+    .slice(0, 8)
+    .map((attempt) => ({
+      attemptId: attempt.id,
+      title: attempt.title,
+      classId: attempt.classId,
+      score: percent(attempt.score, attempt.total),
+      completedAt: attempt.completedAt
+    }))
+    .reverse();
+
   return {
     overallGrade: percent(earned, possible),
     averageTestScore: attempts.length
@@ -102,6 +122,7 @@ export function buildPerformanceAnalytics(
     testsTaken: attempts.length,
     questionsAnswered: possible,
     recentTrend: Math.round(recentAverage - previousAverage),
+    recentScores,
     classPerformance,
     topicPerformance,
     strongestTopic,
