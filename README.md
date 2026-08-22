@@ -5,7 +5,7 @@ TestForge is a modern virtual testing environment that converts uploaded lesson 
 ## MVP features
 
 - Private user accounts with email/password authentication
-- Cloud-synced classes, saved lessons, tests, attempts, and grades
+- Cloud-synced classes, saved lessons, tests, attempts, grades, and analytics
 - PostgreSQL persistence through Supabase
 - Private original-file storage through Supabase Storage
 - Row Level Security so users can access only their own study data and source files
@@ -18,13 +18,18 @@ TestForge is a modern virtual testing environment that converts uploaded lesson 
 - AI lesson-to-test generation when an upload contains study material instead of a ready-made assessment
 - Choose 5, 10, 15, 20, or 30 generated questions
 - Choose beginner, intermediate, or advanced generated difficulty
-- Review and edit every extracted or generated question before publishing
+- AI-generated topic labels for performance analysis
+- Review and edit every extracted or generated question, answer, explanation, and topic before publishing
 - Run tests in a polished virtual testing interface
 - Score completed tests automatically
 - Visually mark correct answers and cross out incorrect selected answers
 - Show a brief explanation under each graded answer
+- Reopen any completed test for a read-only question-by-question review
+- Retake a test directly from its completed review
+- Track weighted overall grade, average test score, questions answered, and recent score trend
+- Compare grades across classes
+- Surface strongest topics and weakest study targets
 - Store per-question answer results for completed tests
-- Calculate and display an overall grade near the user profile
 
 ## Data model
 
@@ -33,6 +38,22 @@ TestForge uses a normalized cloud data model:
 `User -> Classes -> Lesson Sources -> Tests -> Questions -> Attempts -> Attempt Answers`
 
 The SQL schema lives at `supabase/schema.sql`. Every study-data table includes a user owner and has Row Level Security enabled. Test rows can point back to their originating lesson source, which allows one source file to support many different generated assessments.
+
+Questions also include a `topic` field. Newly AI-generated questions receive concise concept labels automatically; extracted or older questions default to **General** unless the user edits the topic before saving.
+
+## Performance analytics
+
+The Analytics view calculates performance directly from saved tests and attempts:
+
+- **Overall grade** is weighted by the number of questions answered.
+- **Average test score** treats each completed attempt as one score.
+- **Recent trend** compares the latest three completed tests with the previous three.
+- **Class performance** shows weighted accuracy and test volume by class.
+- **Topic accuracy** groups answered questions by their saved topic label.
+- **Strongest topic** highlights the highest-accuracy concept.
+- **Best next study target** highlights the lowest-accuracy concept.
+
+Completed-test history rows are interactive. Opening one shows the original question, the student's selected answer, the correct answer, the saved explanation, and the question topic. Reviews are read-only and do not create another attempt unless the user explicitly chooses **Retake test**.
 
 ## Lesson library
 
@@ -53,7 +74,7 @@ Older import records created before source-file storage was added remain visible
 TestForge first looks for structured multiple-choice questions in the source file. When it finds a real test, those questions are preserved. When the file looks like lesson material instead, TestForge uses AI to build a new assessment.
 
 ### Extract existing test
-Only searches the source document for existing numbered multiple-choice questions, answer keys, and explanations. AI generation is skipped.
+Only searches the source document for existing numbered multiple-choice questions, answer keys, explanations, and optional `Topic:` lines. AI generation is skipped.
 
 ### AI generate from lesson
 Uses the uploaded lesson/study material as the source of truth and creates a new multiple-choice assessment. The generated questions are always sent to the edit/review screen before they can be saved.
@@ -76,7 +97,7 @@ Create a Supabase project, open its SQL editor, and run the complete contents of
 supabase/schema.sql
 ```
 
-Re-run the schema if the project was created during an earlier TestForge phase. The schema is designed to add the new lesson-storage columns, create the private `lesson-files` bucket, and install its storage policies.
+Re-run the schema if the project was created during an earlier TestForge phase. The schema is designed to safely add newer fields such as lesson-storage metadata and `questions.topic`, create/update the private `lesson-files` bucket, and install its storage policies.
 
 Then copy the project URL and anon/public key into `.env.local`:
 
@@ -106,11 +127,11 @@ Users can create an account, sign in, and sign out from the TestForge interface.
 
 ## Cloud persistence behavior
 
-Creating a class writes directly to the authenticated user's `classes` records. Saving an imported/generated assessment preserves the source file, creates a lesson-source record, creates the linked test, and stores normalized question rows. Grading a test writes the attempt summary plus one `attempt_answers` row for every question.
+Creating a class writes directly to the authenticated user's `classes` records. Saving an imported/generated assessment preserves the source file, creates a lesson-source record, creates the linked test, and stores normalized question rows including topic labels. Grading a test writes the attempt summary plus one `attempt_answers` row for every question.
 
 ## AI generation behavior
 
-The generator uses the lesson as its source of truth, requests four-option multiple-choice questions, and returns a correct-answer index plus an explanation for every question. The current server route limits generated assessments to 30 questions per generation and shortens very large extracted documents before sending them for generation.
+The generator uses the lesson as its source of truth, requests four-option multiple-choice questions, and returns a correct-answer index, explanation, and concise topic label for every question. The current server route limits generated assessments to 30 questions per generation and shortens very large extracted documents before sending them for generation.
 
 ## Storage limits
 
