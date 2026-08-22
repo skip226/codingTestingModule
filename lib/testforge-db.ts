@@ -2,7 +2,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 const LESSON_BUCKET = 'lesson-files';
 
-export type Question = { id: string; prompt: string; options: string[]; correctIndex: number; explanation: string };
+export type Question = {
+  id: string;
+  prompt: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+  topic: string;
+};
 export type Test = { id: string; classId: string; importId: string | null; title: string; questions: Question[]; createdAt: string };
 export type Attempt = { id: string; testId: string; classId: string; title: string; score: number; total: number; completedAt: string; answers: number[] };
 export type ClassSection = { id: string; name: string };
@@ -19,7 +26,7 @@ export type LessonSource = {
 };
 export type Workspace = { profileName: string; classes: ClassSection[]; lessons: LessonSource[]; tests: Test[]; attempts: Attempt[] };
 
-type QuestionRow = { id: string; prompt: string; options: unknown; correct_index: number; explanation: string; position: number };
+type QuestionRow = { id: string; prompt: string; options: unknown; correct_index: number; explanation: string; topic: string | null; position: number };
 type TestRow = { id: string; class_id: string; import_id: string | null; title: string; created_at: string; questions?: QuestionRow[] | null };
 type LessonRow = {
   id: string;
@@ -60,12 +67,23 @@ function lessonFromRow(row: LessonRow): LessonSource {
   };
 }
 
+function questionFromRow(question: QuestionRow): Question {
+  return {
+    id: question.id,
+    prompt: question.prompt,
+    options: Array.isArray(question.options) ? question.options.map(String) : [],
+    correctIndex: question.correct_index,
+    explanation: question.explanation,
+    topic: question.topic?.trim() || 'General'
+  };
+}
+
 export async function loadWorkspace(client: SupabaseClient, userId: string): Promise<Workspace> {
   const [profileResult, classesResult, lessonsResult, testsResult, attemptsResult] = await Promise.all([
     client.from('profiles').select('full_name').eq('id', userId).maybeSingle(),
     client.from('classes').select('id,name,created_at').order('created_at', { ascending: true }),
     client.from('lesson_imports').select('id,class_id,file_name,title,source_mode,storage_path,mime_type,size_bytes,created_at').order('created_at', { ascending: false }),
-    client.from('tests').select('id,class_id,import_id,title,created_at,questions(id,prompt,options,correct_index,explanation,position)').order('created_at', { ascending: false }),
+    client.from('tests').select('id,class_id,import_id,title,created_at,questions(id,prompt,options,correct_index,explanation,topic,position)').order('created_at', { ascending: false }),
     client.from('attempts').select('id,test_id,class_id,title,score,total,answers,completed_at').order('completed_at', { ascending: false })
   ]);
   const error = profileResult.error || classesResult.error || lessonsResult.error || testsResult.error || attemptsResult.error;
@@ -79,13 +97,7 @@ export async function loadWorkspace(client: SupabaseClient, userId: string): Pro
     importId: row.import_id,
     title: row.title,
     createdAt: row.created_at,
-    questions: (row.questions || []).slice().sort((a, b) => a.position - b.position).map((question) => ({
-      id: question.id,
-      prompt: question.prompt,
-      options: Array.isArray(question.options) ? question.options.map(String) : [],
-      correctIndex: question.correct_index,
-      explanation: question.explanation
-    }))
+    questions: (row.questions || []).slice().sort((a, b) => a.position - b.position).map(questionFromRow)
   }));
   const attempts: Attempt[] = (attemptsResult.data || []).map((row) => ({
     id: row.id,
@@ -164,10 +176,11 @@ export async function createTestForLesson(client: SupabaseClient, userId: string
     options: question.options,
     correct_index: question.correctIndex,
     explanation: question.explanation,
+    topic: question.topic?.trim() || 'General',
     position
   }));
   const { data: savedQuestions, error: questionError } = await client.from('questions')
-    .insert(questionRows).select('id,prompt,options,correct_index,explanation,position');
+    .insert(questionRows).select('id,prompt,options,correct_index,explanation,topic,position');
   if (questionError) {
     await client.from('tests').delete().eq('id', testRow.id);
     throw questionError;
@@ -178,13 +191,7 @@ export async function createTestForLesson(client: SupabaseClient, userId: string
     importId: testRow.import_id,
     title: testRow.title,
     createdAt: testRow.created_at,
-    questions: ((savedQuestions || []) as QuestionRow[]).slice().sort((a, b) => a.position - b.position).map((question) => ({
-      id: question.id,
-      prompt: question.prompt,
-      options: Array.isArray(question.options) ? question.options.map(String) : [],
-      correctIndex: question.correct_index,
-      explanation: question.explanation
-    }))
+    questions: ((savedQuestions || []) as QuestionRow[]).slice().sort((a, b) => a.position - b.position).map(questionFromRow)
   };
 }
 
