@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, Check, RotateCcw, X } from 'lucide-react';
+import { ArrowLeft, Check, RotateCcw, Target, X } from 'lucide-react';
 import type { Attempt, Test } from '../lib/testforge-db';
 
 type AttemptReviewProps = {
@@ -26,6 +26,18 @@ export default function AttemptReview({ attempt, test, className, onClose, onRet
     );
   }
 
+  const missedTopics = Array.from(
+    test.questions.reduce((map, question, index) => {
+      const selectedIndex = attempt.answers[index] ?? -1;
+      if (selectedIndex === question.correctIndex) return map;
+      const topic = question.topic?.trim() || 'General';
+      map.set(topic, (map.get(topic) || 0) + 1);
+      return map;
+    }, new Map<string, number>()).entries()
+  )
+    .map(([topic, missed]) => ({ topic, missed }))
+    .sort((a, b) => b.missed - a.missed || a.topic.localeCompare(b.topic));
+
   return (
     <main className="exam-shell">
       <header className="exam-header">
@@ -46,6 +58,25 @@ export default function AttemptReview({ attempt, test, className, onClose, onRet
         <div><span>Correct</span><strong>{attempt.score}</strong></div>
         <div><span>Incorrect</span><strong>{Math.max(0, attempt.total - attempt.score)}</strong></div>
         <div><span>Completed</span><strong>{new Date(attempt.completedAt).toLocaleDateString()}</strong></div>
+      </section>
+
+      <section className={missedTopics.length ? 'attempt-study-targets' : 'attempt-study-targets perfect'}>
+        <div className="attempt-study-heading">
+          <Target size={18} />
+          <div>
+            <span>{missedTopics.length ? 'Study next' : 'Perfect attempt'}</span>
+            <strong>{missedTopics.length ? 'Review the concepts you missed' : 'No weak topics on this attempt'}</strong>
+          </div>
+        </div>
+        {missedTopics.length ? (
+          <div className="attempt-topic-list">
+            {missedTopics.slice(0, 5).map((item) => (
+              <span className="attempt-topic-chip" key={item.topic}>{item.topic}<strong>{item.missed} missed</strong></span>
+            ))}
+          </div>
+        ) : (
+          <p>You answered every question correctly. A retake later can help confirm retention.</p>
+        )}
       </section>
 
       <section className="question-stack review-question-stack">
