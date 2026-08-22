@@ -5,11 +5,15 @@ TestForge is a modern virtual testing environment that converts uploaded lesson 
 ## MVP features
 
 - Private user accounts with email/password authentication
-- Cloud-synced classes, tests, import records, attempts, and grades
+- Cloud-synced classes, saved lessons, tests, attempts, and grades
 - PostgreSQL persistence through Supabase
-- Row Level Security so users can access only their own study data
+- Private original-file storage through Supabase Storage
+- Row Level Security so users can access only their own study data and source files
 - Organize content by class
 - Upload PDF, DOCX, TXT, and Markdown lesson/test files
+- Save a lesson without generating a test yet
+- Reopen stored lesson files using short-lived signed URLs
+- Generate multiple assessments from the same stored lesson without uploading it again
 - Smart import mode that preserves existing tests when structured questions are detected
 - AI lesson-to-test generation when an upload contains study material instead of a ready-made assessment
 - Choose 5, 10, 15, 20, or 30 generated questions
@@ -24,11 +28,24 @@ TestForge is a modern virtual testing environment that converts uploaded lesson 
 
 ## Data model
 
-TestForge now uses a normalized cloud data model:
+TestForge uses a normalized cloud data model:
 
-`User -> Classes -> Lesson Imports -> Tests -> Questions -> Attempts -> Attempt Answers`
+`User -> Classes -> Lesson Sources -> Tests -> Questions -> Attempts -> Attempt Answers`
 
-The SQL schema lives at `supabase/schema.sql`. Every study-data table includes a user owner and has Row Level Security enabled.
+The SQL schema lives at `supabase/schema.sql`. Every study-data table includes a user owner and has Row Level Security enabled. Test rows can point back to their originating lesson source, which allows one source file to support many different generated assessments.
+
+## Lesson library
+
+Each class has a reusable lesson library. A user can either:
+
+1. Store a lesson file now and generate tests from it later, or
+2. Use Import / Generate normally and preserve the original source automatically when the resulting test is saved.
+
+Original files are placed in the private `lesson-files` Supabase Storage bucket under a user-specific path. The bucket is not public. Storage policies allow access only when the first path segment matches the authenticated user's ID.
+
+The app uses a short-lived signed URL when a user chooses **Open source**. When **Generate new test** is selected, the private file is downloaded through the authenticated Supabase client and sent back through TestForge's assessment-generation flow. The existing lesson row is reused instead of creating a duplicate source record.
+
+Older import records created before source-file storage was added remain visible as **Metadata only** records, but they cannot be reopened or regenerated unless the source is uploaded again.
 
 ## Import modes
 
@@ -43,7 +60,7 @@ Uses the uploaded lesson/study material as the source of truth and creates a new
 
 ## Local setup
 
-Requirements: Node.js 22 or newer, an OpenAI API key for AI generation, and a Supabase project for authentication/database persistence.
+Requirements: Node.js 22 or newer, an OpenAI API key for AI generation, and a Supabase project for authentication, database persistence, and private file storage.
 
 ```bash
 npm install
@@ -59,6 +76,8 @@ Create a Supabase project, open its SQL editor, and run the complete contents of
 supabase/schema.sql
 ```
 
+Re-run the schema if the project was created during an earlier TestForge phase. The schema is designed to add the new lesson-storage columns, create the private `lesson-files` bucket, and install its storage policies.
+
 Then copy the project URL and anon/public key into `.env.local`:
 
 ```bash
@@ -66,7 +85,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key_here
 ```
 
-The anon key is intended for browser use. TestForge protects private records with Row Level Security policies tied to the authenticated user.
+The anon key is intended for browser use. TestForge protects private records and Storage objects with Row Level Security policies tied to the authenticated user.
 
 ### 2. Configure OpenAI
 
@@ -87,15 +106,15 @@ Users can create an account, sign in, and sign out from the TestForge interface.
 
 ## Cloud persistence behavior
 
-Creating a class writes directly to the authenticated user's `classes` records. Saving an imported/generated assessment creates an import record, test, and normalized question rows. Grading a test writes the attempt summary plus one `attempt_answers` row for every question, allowing future analytics and detailed review pages without relying on browser storage.
+Creating a class writes directly to the authenticated user's `classes` records. Saving an imported/generated assessment preserves the source file, creates a lesson-source record, creates the linked test, and stores normalized question rows. Grading a test writes the attempt summary plus one `attempt_answers` row for every question.
 
 ## AI generation behavior
 
-The generator uses the lesson as its source of truth, requests four-option multiple-choice questions, and returns a correct-answer index plus an explanation for every question. The current server route limits generated assessments to 30 questions per upload and shortens very large extracted documents before sending them for generation.
+The generator uses the lesson as its source of truth, requests four-option multiple-choice questions, and returns a correct-answer index plus an explanation for every question. The current server route limits generated assessments to 30 questions per generation and shortens very large extracted documents before sending them for generation.
 
-## Current persistence limitation
+## Storage limits
 
-TestForge stores import metadata and generated/extracted assessment content in Postgres, but it does not yet upload the original source file itself into Supabase Storage. Adding source-file storage and a lesson library is a logical future enhancement.
+The supplied Supabase schema configures the lesson bucket with a 25 MB per-file limit and allows PDF, DOCX, TXT, and Markdown MIME types. Those values can be adjusted in Supabase later if the product needs larger textbooks or additional source formats.
 
 ## Development
 
