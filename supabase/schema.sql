@@ -1,4 +1,4 @@
--- TestForge database schema
+-- TestForge database + private lesson-file storage schema
 -- Run this in the Supabase SQL editor for the project connected to TestForge.
 
 create extension if not exists pgcrypto;
@@ -21,10 +21,22 @@ create table if not exists public.lesson_imports (
   user_id uuid not null references auth.users(id) on delete cascade,
   class_id uuid not null references public.classes(id) on delete cascade,
   file_name text not null,
-  source_mode text not null default 'extracted' check (source_mode in ('extracted', 'generated', 'unavailable')),
+  source_mode text not null default 'extracted',
   title text,
+  storage_path text,
+  mime_type text,
+  size_bytes bigint,
   created_at timestamptz not null default now()
 );
+
+-- Make this migration safe for projects that ran an earlier TestForge schema.
+alter table public.lesson_imports add column if not exists storage_path text;
+alter table public.lesson_imports add column if not exists mime_type text;
+alter table public.lesson_imports add column if not exists size_bytes bigint;
+alter table public.lesson_imports drop constraint if exists lesson_imports_source_mode_check;
+alter table public.lesson_imports
+  add constraint lesson_imports_source_mode_check
+  check (source_mode in ('extracted', 'generated', 'unavailable', 'stored'));
 
 create table if not exists public.tests (
   id uuid primary key default gen_random_uuid(),
@@ -72,8 +84,10 @@ create table if not exists public.attempt_answers (
 create index if not exists classes_user_id_idx on public.classes(user_id);
 create index if not exists lesson_imports_user_id_idx on public.lesson_imports(user_id);
 create index if not exists lesson_imports_class_id_idx on public.lesson_imports(class_id);
+create index if not exists lesson_imports_storage_path_idx on public.lesson_imports(storage_path);
 create index if not exists tests_user_id_idx on public.tests(user_id);
 create index if not exists tests_class_id_idx on public.tests(class_id);
+create index if not exists tests_import_id_idx on public.tests(import_id);
 create index if not exists questions_test_id_idx on public.questions(test_id);
 create index if not exists attempts_user_id_idx on public.attempts(user_id);
 create index if not exists attempts_test_id_idx on public.attempts(test_id);
@@ -128,3 +142,59 @@ create policy "attempts_own_all" on public.attempts for all using (auth.uid() = 
 
 drop policy if exists "attempt_answers_own_all" on public.attempt_answers;
 create policy "attempt_answers_own_all" on public.attempt_answers for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Private source-file bucket. Files are stored under <user-id>/<class-id>/<unique-name>.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'lesson-files',
+  'lesson-files',
+  false,
+  26214400,
+  array[
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain',
+    'text/markdown'
+  ]
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "lesson_files_select_own" on storage.objects;
+drop policy if exists "lesson_files_insert_own" on storage.objects;
+drop policy if exists "lesson_files_update_own" on storage.objects;
+drop policy if exists "lesson_files_delete_own" on storage.objects;
+
+create policy "lesson_files_select_own"
+on storage.objects for select
+using (
+  bucket_id = 'lesson-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "lesson_files_insert_own"
+on storage.objects for insert
+with check (
+  bucket_id = 'lesson-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "lesson_files_update_own"
+on storage.objects for update
+using (
+  bucket_id = 'lesson-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+)
+with check (
+  bucket_id = 'lesson-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "lesson_files_delete_own"
+on storage.objects for delete
+using (
+  bucket_id = 'lesson-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
