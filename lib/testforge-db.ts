@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+const LESSON_BUCKET = 'lesson-files';
+
 export type Question = {
   id: string;
   prompt: string;
@@ -11,6 +13,7 @@ export type Question = {
 export type Test = {
   id: string;
   classId: string;
+  importId: string | null;
   title: string;
   questions: Question[];
   createdAt: string;
@@ -32,9 +35,22 @@ export type ClassSection = {
   name: string;
 };
 
+export type LessonSource = {
+  id: string;
+  classId: string;
+  fileName: string;
+  title: string;
+  sourceMode: string;
+  storagePath: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  createdAt: string;
+};
+
 export type Workspace = {
   profileName: string;
   classes: ClassSection[];
+  lessons: LessonSource[];
   tests: Test[];
   attempts: Attempt[];
 };
@@ -51,18 +67,67 @@ type QuestionRow = {
 type TestRow = {
   id: string;
   class_id: string;
+  import_id: string | null;
   title: string;
   created_at: string;
   questions?: QuestionRow[] | null;
 };
 
+type LessonRow = {
+  id: string;
+  class_id: string;
+  file_name: string;
+  title: string | null;
+  source_mode: string;
+  storage_path: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  created_at: string;
+};
+
+function defaultMimeType(file: File) {
+  if (file.type) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.pdf')) return 'application/pdf';
+  if (name.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (name.endsWith('.md')) return 'text/markdown';
+  return 'text/plain';
+}
+
+function safeFileName(name: string) {
+  const cleaned = name
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return cleaned || 'lesson-file';
+}
+
+function lessonFromRow(row: LessonRow): LessonSource {
+  return {
+    id: row.id,
+    classId: row.class_id,
+    fileName: row.file_name,
+    title: row.title || row.file_name.replace(/\.[^.]+$/, ''),
+    sourceMode: row.source_mode,
+    storagePath: row.storage_path,
+    mimeType: row.mime_type,
+    sizeBytes: row.size_bytes === null ? null : Number(row.size_bytes),
+    createdAt: row.created_at
+  };
+}
+
 export async function loadWorkspace(client: SupabaseClient, userId: string): Promise<Workspace> {
-  const [profileResult, classesResult, testsResult, attemptsResult] = await Promise.all([
+  const [profileResult, classesResult, lessonsResult, testsResult, attemptsResult] = await Promise.all([
     client.from('profiles').select('full_name').eq('id', userId).maybeSingle(),
     client.from('classes').select('id,name,created_at').order('created_at', { ascending: true }),
     client
+      .from('lesson_imports')
+      .select('id,class_id,file_name,title,source_mode,storage_path,mime_type,size_bytes,created_at')
+      .order('created_at', { ascending: false }),
+    client
       .from('tests')
-      .select('id,class_id,title,created_at,questions(id,prompt,options,correct_index,explanation,position)')
+      .select('id,class_id,import_id,title,created_at,questions(id,prompt,options,correct_index,explanation,position)')
       .order('created_at', { ascending: false }),
     client
       .from('attempts')
@@ -70,13 +135,15 @@ export async function loadWorkspace(client: SupabaseClient, userId: string): Pro
       .order('completed_at', { ascending: false })
   ]);
 
-  const error = profileResult.error || classesResult.error || testsResult.error || attemptsResult.error;
+  const error = profileResult.error || classesResult.error || lessonsResult.error || testsResult.error || attemptsResult.error;
   if (error) throw error;
 
   const classes: ClassSection[] = (classesResult.data || []).map((row) => ({ id: row.id, name: row.name }));
+  const lessons: LessonSource[] = ((lessonsResult.data || []) as LessonRow[]).map(lessonFromRow);
   const tests: Test[] = ((testsResult.data || []) as TestRow[]).map((row) => ({
     id: row.id,
     classId: row.class_id,
+    importId: row.import_id,
     title: row.title,
     createdAt: row.created_at,
     questions: (row.questions || [])
@@ -105,6 +172,7 @@ export async function loadWorkspace(client: SupabaseClient, userId: string): Pro
   return {
     profileName: profileResult.data?.full_name || 'Student',
     classes,
+    lessons,
     tests,
     attempts
   };
@@ -120,37 +188,72 @@ export async function createClass(client: SupabaseClient, userId: string, name: 
   return { id: data.id, name: data.name };
 }
 
-export async function createTestFromImport(
+export async function saveLessonFile(
   client: SupabaseClient,
   userId: string,
   classId: string,
-  title: string,
-  questions: Question[],
-  source: { fileName: string; sourceMode: string }
-): Promise<Test> {
-  const { data: importRow, error: importError } = await client
+  file: File,
+  options?: { title?: string; sourceMode?: string }
+): Promise<LessonSource> {
+  const storagePath = `${userId}/${classId}/${crypto.randomUUID()}-${safeFileName(file.name)}`;
+  const mimeType = defaultMimeType(file);
+  const { error: uploadError } = await client.storage
+    .from(LESSON_BUCKET)
+    .upload(storagePath, file, { contentType: mimeType, upsert: false });
+  if (uploadError) throw uploadError;
+
+  const { data, error } = await client
     .from('lesson_imports')
     .insert({
       user_id: userId,
       class_id: classId,
-      file_name: source.fileName || 'Imported file',
-      source_mode: source.sourceMode || 'extracted',
-      title
+      file_name: file.name,
+      source_mode: options?.sourceMode || 'stored',
+      title: options?.title?.trim() || file.name.replace(/\.[^.]+$/, ''),
+      storage_path: storagePath,
+      mime_type: mimeType,
+      size_bytes: file.size
     })
-    .select('id')
+    .select('id,class_id,file_name,title,source_mode,storage_path,mime_type,size_bytes,created_at')
     .single();
-  if (importError) throw importError;
 
+  if (error) {
+    await client.storage.from(LESSON_BUCKET).remove([storagePath]);
+    throw error;
+  }
+
+  return lessonFromRow(data as LessonRow);
+}
+
+export async function downloadLessonFile(client: SupabaseClient, lesson: LessonSource): Promise<File> {
+  if (!lesson.storagePath) throw new Error('This older lesson record does not have a stored source file.');
+  const { data, error } = await client.storage.from(LESSON_BUCKET).download(lesson.storagePath);
+  if (error) throw error;
+  return new File([data], lesson.fileName, { type: lesson.mimeType || data.type || 'application/octet-stream' });
+}
+
+export async function createLessonDownloadUrl(client: SupabaseClient, lesson: LessonSource) {
+  if (!lesson.storagePath) throw new Error('This older lesson record does not have a stored source file.');
+  const { data, error } = await client.storage.from(LESSON_BUCKET).createSignedUrl(lesson.storagePath, 300, {
+    download: lesson.fileName
+  });
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+export async function createTestForLesson(
+  client: SupabaseClient,
+  userId: string,
+  lesson: LessonSource,
+  title: string,
+  questions: Question[]
+): Promise<Test> {
   const { data: testRow, error: testError } = await client
     .from('tests')
-    .insert({ user_id: userId, class_id: classId, import_id: importRow.id, title })
-    .select('id,class_id,title,created_at')
+    .insert({ user_id: userId, class_id: lesson.classId, import_id: lesson.id, title })
+    .select('id,class_id,import_id,title,created_at')
     .single();
-
-  if (testError) {
-    await client.from('lesson_imports').delete().eq('id', importRow.id);
-    throw testError;
-  }
+  if (testError) throw testError;
 
   const questionRows = questions.map((question, position) => ({
     user_id: userId,
@@ -175,6 +278,7 @@ export async function createTestFromImport(
   return {
     id: testRow.id,
     classId: testRow.class_id,
+    importId: testRow.import_id,
     title: testRow.title,
     createdAt: testRow.created_at,
     questions: ((savedQuestions || []) as QuestionRow[])
@@ -188,6 +292,22 @@ export async function createTestFromImport(
         explanation: question.explanation
       }))
   };
+}
+
+export async function createTestFromImport(
+  client: SupabaseClient,
+  userId: string,
+  classId: string,
+  title: string,
+  questions: Question[],
+  source: { file: File; sourceMode: string }
+): Promise<{ test: Test; lesson: LessonSource }> {
+  const lesson = await saveLessonFile(client, userId, classId, source.file, {
+    title,
+    sourceMode: source.sourceMode || 'extracted'
+  });
+  const test = await createTestForLesson(client, userId, lesson, title, questions);
+  return { test, lesson };
 }
 
 export async function recordAttempt(
