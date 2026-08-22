@@ -11,6 +11,7 @@ type ParsedQuestion = {
   options: string[];
   correctIndex: number;
   explanation: string;
+  topic: string;
 };
 
 type GenerationDifficulty = 'beginner' | 'intermediate' | 'advanced';
@@ -39,6 +40,7 @@ function parseQuestions(text: string): ParsedQuestion[] {
 
     const answerLine = lines.find((line) => /^(?:answer|correct answer)\s*[:\-]/i.test(line));
     const explanationLine = lines.find((line) => /^explanation\s*[:\-]/i.test(line));
+    const topicLine = lines.find((line) => /^topic\s*[:\-]/i.test(line));
     const options = optionLines.map(cleanOption);
 
     let correctIndex = 0;
@@ -59,7 +61,8 @@ function parseQuestions(text: string): ParsedQuestion[] {
       correctIndex: Math.min(Math.max(correctIndex, 0), options.length - 1),
       explanation: explanationLine
         ? explanationLine.replace(/^explanation\s*[:\-]\s*/i, '').trim()
-        : 'Review this answer against the source material before publishing the test.'
+        : 'Review this answer against the source material before publishing the test.',
+      topic: topicLine ? topicLine.replace(/^topic\s*[:\-]\s*/i, '').trim() || 'General' : 'General'
     });
   }
 
@@ -76,7 +79,8 @@ function parseQuestions(text: string): ParsedQuestion[] {
       prompt: line,
       options: candidates.map(cleanOption),
       correctIndex: 0,
-      explanation: 'The scanner could not confidently detect the answer key. Review this question before publishing.'
+      explanation: 'The scanner could not confidently detect the answer key. Review this question before publishing.',
+      topic: 'General'
     });
   }
 
@@ -105,9 +109,7 @@ function prepareSource(text: string) {
 }
 
 async function generateAssessment(text: string, count: number, difficulty: GenerationDifficulty, fileName: string) {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY_MISSING');
-  }
+  if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY_MISSING');
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const source = prepareSource(text);
@@ -119,6 +121,8 @@ async function generateAssessment(text: string, count: number, difficulty: Gener
       'Create useful multiple-choice questions with exactly four distinct answer choices.',
       'Wrong answers should be plausible but clearly incorrect according to the source.',
       'The explanation must briefly explain why the correct answer is correct and clarify the likely misconception behind a wrong choice.',
+      'Give every question a concise topic label of roughly one to four words so student performance can be grouped by concept.',
+      'Reuse the same topic label for questions testing the same concept.',
       'Avoid trivia unless it is central to the lesson. Favor comprehension, application, and important definitions.'
     ].join(' '),
     input: `Source file: ${fileName}\nRequested difficulty: ${difficulty}\nRequested question count: ${count}\n\nSOURCE MATERIAL\n${source}`,
@@ -139,15 +143,13 @@ async function generateAssessment(text: string, count: number, difficulty: Gener
               items: {
                 type: 'object',
                 additionalProperties: false,
-                required: ['prompt', 'options', 'correctIndex', 'explanation'],
+                required: ['prompt', 'options', 'correctIndex', 'explanation', 'topic'],
                 properties: {
                   prompt: { type: 'string' },
-                  options: {
-                    type: 'array',
-                    items: { type: 'string' }
-                  },
+                  options: { type: 'array', items: { type: 'string' } },
                   correctIndex: { type: 'integer' },
-                  explanation: { type: 'string' }
+                  explanation: { type: 'string' },
+                  topic: { type: 'string' }
                 }
               }
             }
@@ -160,7 +162,7 @@ async function generateAssessment(text: string, count: number, difficulty: Gener
   if (!response.output_text) throw new Error('AI generation returned no content.');
   const parsed = JSON.parse(response.output_text) as {
     title?: string;
-    questions?: Array<{ prompt?: string; options?: string[]; correctIndex?: number; explanation?: string }>;
+    questions?: Array<{ prompt?: string; options?: string[]; correctIndex?: number; explanation?: string; topic?: string }>;
   };
 
   const questions = (parsed.questions || [])
@@ -178,7 +180,8 @@ async function generateAssessment(text: string, count: number, difficulty: Gener
       prompt: String(question.prompt).trim(),
       options: question.options!.slice(0, 4).map((option) => String(option).trim()),
       correctIndex: Number(question.correctIndex),
-      explanation: String(question.explanation || 'Review the source material for the reasoning behind this answer.').trim()
+      explanation: String(question.explanation || 'Review the source material for the reasoning behind this answer.').trim(),
+      topic: String(question.topic || 'General').trim() || 'General'
     } satisfies ParsedQuestion));
 
   if (questions.length === 0) throw new Error('AI generation did not produce usable questions.');
@@ -192,9 +195,7 @@ export async function POST(request: Request) {
   try {
     const formData = await request.formData();
     const file = formData.get('file');
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: 'No file was provided.' }, { status: 400 });
-    }
+    if (!(file instanceof File)) return NextResponse.json({ error: 'No file was provided.' }, { status: 400 });
 
     const mode = normalizeMode(formData.get('mode'));
     const questionCount = normalizeQuestionCount(formData.get('questionCount'));
@@ -203,19 +204,12 @@ export async function POST(request: Request) {
     const name = file.name.toLowerCase();
     let text = '';
 
-    if (name.endsWith('.pdf')) {
-      text = (await pdf(buffer)).text;
-    } else if (name.endsWith('.docx')) {
-      text = (await mammoth.extractRawText({ buffer })).value;
-    } else if (name.endsWith('.txt') || name.endsWith('.md')) {
-      text = buffer.toString('utf8');
-    } else {
-      return NextResponse.json({ error: 'Supported file types: PDF, DOCX, TXT, and MD.' }, { status: 415 });
-    }
+    if (name.endsWith('.pdf')) text = (await pdf(buffer)).text;
+    else if (name.endsWith('.docx')) text = (await mammoth.extractRawText({ buffer })).value;
+    else if (name.endsWith('.txt') || name.endsWith('.md')) text = buffer.toString('utf8');
+    else return NextResponse.json({ error: 'Supported file types: PDF, DOCX, TXT, and MD.' }, { status: 415 });
 
-    if (!text.trim()) {
-      return NextResponse.json({ error: 'No readable text could be extracted from this file.' }, { status: 422 });
-    }
+    if (!text.trim()) return NextResponse.json({ error: 'No readable text could be extracted from this file.' }, { status: 422 });
 
     const extractedQuestions = parseQuestions(text);
 
