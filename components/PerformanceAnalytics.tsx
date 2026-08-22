@@ -73,6 +73,27 @@ export default function PerformanceAnalytics({ analytics }: PerformanceAnalytics
         </article>
       </div>
 
+      <section className="analytics-panel trend-panel">
+        <div className="analytics-panel-heading trend-heading">
+          <div><span className="eyebrow">Recent progress</span><h3>Score trend</h3></div>
+          <span>Oldest → newest · last {analytics.recentScores.length}</span>
+        </div>
+        <div className="score-trend-chart" aria-label="Recent test score trend">
+          {analytics.recentScores.map((point) => (
+            <article className="score-trend-point" key={point.attemptId} title={`${point.title}: ${point.score}%`}>
+              <div className="score-trend-value">{point.score}%</div>
+              <div className="score-trend-track">
+                <span className={metricTone(point.score)} style={{ height: `${Math.max(4, point.score)}%` }} />
+              </div>
+              <div className="score-trend-label">
+                <strong>{new Date(point.completedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</strong>
+                <span>{point.className}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <div className="analytics-detail-grid">
         <section className="analytics-panel">
           <div className="analytics-panel-heading"><div><span className="eyebrow">By class</span><h3>Class performance</h3></div></div>
