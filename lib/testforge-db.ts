@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { assertCompleteAttempt, assertPublishableQuestions } from './testforge-validation';
 
 const LESSON_BUCKET = 'lesson-files';
 
@@ -78,6 +79,17 @@ function questionFromRow(question: QuestionRow): Question {
   };
 }
 
+async function removeLessonSource(client: SupabaseClient, lesson: LessonSource) {
+  const failures: string[] = [];
+  if (lesson.storagePath) {
+    const { error } = await client.storage.from(LESSON_BUCKET).remove([lesson.storagePath]);
+    if (error) failures.push(error.message);
+  }
+  const { error } = await client.from('lesson_imports').delete().eq('id', lesson.id);
+  if (error) failures.push(error.message);
+  return failures;
+}
+
 export async function loadWorkspace(client: SupabaseClient, userId: string): Promise<Workspace> {
   const [profileResult, classesResult, lessonsResult, testsResult, attemptsResult] = await Promise.all([
     client.from('profiles').select('full_name').eq('id', userId).maybeSingle(),
@@ -113,7 +125,9 @@ export async function loadWorkspace(client: SupabaseClient, userId: string): Pro
 }
 
 export async function createClass(client: SupabaseClient, userId: string, name: string): Promise<ClassSection> {
-  const { data, error } = await client.from('classes').insert({ user_id: userId, name: name.trim() }).select('id,name').single();
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error('Class name cannot be empty.');
+  const { data, error } = await client.from('classes').insert({ user_id: userId, name: trimmed }).select('id,name').single();
   if (error) throw error;
   return { id: data.id, name: data.name };
 }
@@ -125,6 +139,7 @@ export async function saveLessonFile(
   file: File,
   options?: { title?: string; sourceMode?: string }
 ): Promise<LessonSource> {
+  if (file.size > 25 * 1024 * 1024) throw new Error('Lesson files must be 25 MB or smaller.');
   const storagePath = `${userId}/${classId}/${crypto.randomUUID()}-${safeFileName(file.name)}`;
   const mimeType = defaultMimeType(file);
   const { error: uploadError } = await client.storage.from(LESSON_BUCKET).upload(storagePath, file, { contentType: mimeType, upsert: false });
@@ -164,18 +179,20 @@ export async function createLessonSignedUrl(client: SupabaseClient, lesson: Less
 }
 
 export async function createTestForLesson(client: SupabaseClient, userId: string, lesson: LessonSource, title: string, questions: Question[]): Promise<Test> {
+  assertPublishableQuestions(questions);
+  const safeTitle = title.trim() || 'Untitled Test';
   const { data: testRow, error: testError } = await client.from('tests')
-    .insert({ user_id: userId, class_id: lesson.classId, import_id: lesson.id, title })
+    .insert({ user_id: userId, class_id: lesson.classId, import_id: lesson.id, title: safeTitle })
     .select('id,class_id,import_id,title,created_at').single();
   if (testError) throw testError;
 
   const questionRows = questions.map((question, position) => ({
     user_id: userId,
     test_id: testRow.id,
-    prompt: question.prompt,
-    options: question.options,
+    prompt: question.prompt.trim(),
+    options: question.options.map((option) => option.trim()),
     correct_index: question.correctIndex,
-    explanation: question.explanation,
+    explanation: question.explanation.trim(),
     topic: question.topic?.trim() || 'General',
     position
   }));
@@ -203,12 +220,21 @@ export async function createTestFromImport(
   questions: Question[],
   source: { file: File; sourceMode: string }
 ): Promise<{ test: Test; lesson: LessonSource }> {
+  assertPublishableQuestions(questions);
   const lesson = await saveLessonFile(client, userId, classId, source.file, { title, sourceMode: source.sourceMode || 'extracted' });
-  const test = await createTestForLesson(client, userId, lesson, title, questions);
-  return { test, lesson };
+  try {
+    const test = await createTestForLesson(client, userId, lesson, title, questions);
+    return { test, lesson };
+  } catch (error) {
+    const cleanupFailures = await removeLessonSource(client, lesson);
+    if (cleanupFailures.length) console.error('TestForge cleanup failed after test creation error', cleanupFailures);
+    throw error;
+  }
 }
 
 export async function recordAttempt(client: SupabaseClient, userId: string, test: Test, answers: number[]): Promise<Attempt> {
+  assertPublishableQuestions(test.questions);
+  assertCompleteAttempt(test.questions, answers);
   const score = test.questions.reduce((total, question, index) => total + (answers[index] === question.correctIndex ? 1 : 0), 0);
   const { data: attemptRow, error: attemptError } = await client.from('attempts').insert({
     user_id: userId,
