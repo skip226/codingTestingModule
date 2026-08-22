@@ -34,12 +34,12 @@ type LessonRow = {
 };
 
 function defaultMimeType(file: File) {
-  if (file.type) return file.type;
   const name = file.name.toLowerCase();
   if (name.endsWith('.pdf')) return 'application/pdf';
   if (name.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (name.endsWith('.md')) return 'text/markdown';
-  return 'text/plain';
+  if (name.endsWith('.txt')) return 'text/plain';
+  return file.type || 'application/octet-stream';
 }
 
 function safeFileName(name: string) {
