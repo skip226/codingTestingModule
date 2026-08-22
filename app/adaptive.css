@@ -1,0 +1,135 @@
+.adaptive-section { max-width: 1120px; }
+
+.adaptive-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 22px;
+  border: 1px solid rgba(124,108,255,.28);
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(124,108,255,.13), rgba(17,24,44,.9) 58%, rgba(41,211,178,.07));
+}
+
+.adaptive-hero-icon {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  color: #d8d3ff;
+  background: rgba(124,108,255,.16);
+  border: 1px solid rgba(124,108,255,.25);
+}
+
+.adaptive-hero-copy { min-width: 0; }
+.adaptive-hero-copy > span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.adaptive-hero-copy > strong { display: block; font-size: clamp(19px, 2.5vw, 25px); }
+.adaptive-hero-copy p { margin: 8px 0 0; max-width: 760px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.adaptive-start { white-space: nowrap; }
+
+.adaptive-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.adaptive-meta-grid article {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--panel);
+  color: #bbb3ff;
+}
+.adaptive-meta-grid article > div { display: grid; gap: 3px; }
+.adaptive-meta-grid span { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.adaptive-meta-grid strong { color: var(--text); font-size: 12px; }
+
+.study-plan-list { display: grid; gap: 10px; margin-top: 18px; }
+.study-plan-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 17px;
+  border: 1px solid var(--border);
+  border-radius: 17px;
+  background: var(--panel);
+}
+.study-rank {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #d7d2ff;
+  background: rgba(124,108,255,.12);
+  font-size: 12px;
+  font-weight: 900;
+}
+.study-plan-copy { min-width: 0; }
+.study-plan-title { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.study-plan-title > strong { font-size: 16px; }
+.study-plan-copy p { margin: 6px 0 8px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.study-plan-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; color: #73849f; font-size: 10px; font-weight: 700; }
+.study-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.study-status.focus { color: #ffd0d8; border-color: rgba(251,113,133,.3); background: rgba(251,113,133,.08); }
+.study-status.reinforce { color: #ded9ff; border-color: rgba(124,108,255,.3); background: rgba(124,108,255,.09); }
+.study-status.baseline { color: #c7e5ff; border-color: rgba(96,165,250,.28); background: rgba(96,165,250,.08); }
+.study-status.maintain { color: #c8fff5; border-color: rgba(45,212,191,.28); background: rgba(45,212,191,.07); }
+.study-plan-chevron { color: #667895; }
+
+.adaptive-snapshot { margin-top: 24px; }
+.adaptive-snapshot-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 16px 18px;
+  border: 1px solid rgba(124,108,255,.24);
+  border-radius: 16px;
+  background: rgba(124,108,255,.055);
+  color: #c7c0ff;
+}
+.adaptive-snapshot-card > div { display: grid; gap: 4px; }
+.adaptive-snapshot-card strong { color: var(--text); }
+.adaptive-snapshot-card span { color: var(--muted); font-size: 12px; }
+
+@media (max-width: 900px) {
+  .adaptive-hero { grid-template-columns: auto 1fr; }
+  .adaptive-start { grid-column: 1 / -1; width: 100%; }
+}
+
+@media (max-width: 720px) {
+  .adaptive-meta-grid { grid-template-columns: 1fr; }
+  .study-plan-row { grid-template-columns: 34px minmax(0, 1fr); }
+  .study-plan-chevron { display: none; }
+}
+
+@media (max-width: 560px) {
+  .adaptive-hero { grid-template-columns: 1fr; }
+  .adaptive-hero-icon { width: 46px; height: 46px; }
+  .study-plan-row { grid-template-columns: 1fr; }
+  .study-rank { width: 30px; height: 30px; }
+}

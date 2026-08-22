@@ -1,0 +1,59 @@
+.hero-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.lesson-section { max-width: 1180px; }
+.lesson-upload {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px dashed rgba(41,211,178,.34);
+  border-radius: 18px;
+  background: rgba(41,211,178,.055);
+  cursor: pointer;
+  margin-bottom: 18px;
+}
+.lesson-upload:hover { border-color: rgba(41,211,178,.58); background: rgba(41,211,178,.08); }
+.lesson-upload.busy { opacity: .62; cursor: wait; }
+.lesson-upload svg { color: var(--accent-2); flex: 0 0 auto; }
+.lesson-upload div { display: grid; gap: 4px; }
+.lesson-upload span { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.lesson-upload input { display: none; }
+.lesson-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.lesson-card {
+  padding: 20px;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 16px 50px rgba(0,0,0,.14);
+}
+.lesson-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lesson-file-icon { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; color: #b9b0ff; background: rgba(124,108,255,.14); }
+.storage-pill { padding: 6px 9px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: #c9fff6; background: rgba(45,212,191,.1); border: 1px solid rgba(45,212,191,.2); }
+.storage-pill.legacy { color: #d4d9e3; background: rgba(148,163,184,.08); border-color: rgba(148,163,184,.16); }
+.lesson-card h3 { margin: 6px 0 7px; font-size: 19px; }
+.lesson-card p { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.lesson-stats { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.lesson-stats span { color: #b8c6da; background: rgba(255,255,255,.045); border: 1px solid var(--border); border-radius: 999px; padding: 5px 8px; font-size: 10px; }
+.lesson-actions { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lesson-actions .ghost-button, .lesson-actions .primary-button { min-height: 42px; padding: 10px 12px; font-size: 12px; }
+.lesson-actions button:disabled { opacity: .42; cursor: not-allowed; }
+.reuse-progress { display: flex; align-items: center; gap: 13px; padding: 18px; border: 1px solid rgba(124,108,255,.24); background: rgba(124,108,255,.07); border-radius: 18px; }
+.reuse-progress svg { color: #b8aeff; }
+.reuse-progress div { display: grid; gap: 4px; }
+.reuse-progress span { color: var(--muted); font-size: 12px; }
+
+@media (max-width: 820px) {
+  nav { grid-template-columns: repeat(4, 1fr); }
+  .hero-actions { width: 100%; justify-content: stretch; }
+  .hero-actions button { flex: 1; }
+}
+
+@media (max-width: 620px) {
+  nav { grid-template-columns: 1fr 1fr; }
+  .lesson-grid { grid-template-columns: 1fr; }
+  .lesson-actions { grid-template-columns: 1fr; }
+  .lesson-upload { align-items: flex-start; }
+}
