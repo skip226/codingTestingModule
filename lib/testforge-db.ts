@@ -81,12 +81,13 @@ function questionFromRow(question: QuestionRow): Question {
 
 async function removeLessonSource(client: SupabaseClient, lesson: LessonSource) {
   const failures: string[] = [];
+  const { error: rowError } = await client.from('lesson_imports').delete().eq('id', lesson.id);
+  if (rowError) return [rowError.message];
+
   if (lesson.storagePath) {
-    const { error } = await client.storage.from(LESSON_BUCKET).remove([lesson.storagePath]);
-    if (error) failures.push(error.message);
+    const { error: storageError } = await client.storage.from(LESSON_BUCKET).remove([lesson.storagePath]);
+    if (storageError) failures.push(storageError.message);
   }
-  const { error } = await client.from('lesson_imports').delete().eq('id', lesson.id);
-  if (error) failures.push(error.message);
   return failures;
 }
 
