@@ -55,9 +55,13 @@ create table if not exists public.questions (
   options jsonb not null,
   correct_index integer not null check (correct_index >= 0),
   explanation text not null default '',
+  topic text not null default 'General',
   position integer not null default 0,
   created_at timestamptz not null default now()
 );
+
+alter table public.questions add column if not exists topic text not null default 'General';
+update public.questions set topic = 'General' where topic is null or char_length(trim(topic)) = 0;
 
 create table if not exists public.attempts (
   id uuid primary key default gen_random_uuid(),
@@ -89,6 +93,7 @@ create index if not exists tests_user_id_idx on public.tests(user_id);
 create index if not exists tests_class_id_idx on public.tests(class_id);
 create index if not exists tests_import_id_idx on public.tests(import_id);
 create index if not exists questions_test_id_idx on public.questions(test_id);
+create index if not exists questions_topic_idx on public.questions(topic);
 create index if not exists attempts_user_id_idx on public.attempts(user_id);
 create index if not exists attempts_test_id_idx on public.attempts(test_id);
 create index if not exists attempt_answers_attempt_id_idx on public.attempt_answers(attempt_id);
