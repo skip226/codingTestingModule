@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import './ai-controls.css';
 import './workspace.css';
+import './lesson-library.css';
 
 export const metadata: Metadata = {
   title: 'TestForge',
