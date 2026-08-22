@@ -3,6 +3,7 @@ import './globals.css';
 import './ai-controls.css';
 import './workspace.css';
 import './lesson-library.css';
+import './analytics.css';
 
 export const metadata: Metadata = {
   title: 'TestForge',
