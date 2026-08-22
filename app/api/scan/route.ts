@@ -116,7 +116,7 @@ async function generateAssessment(text: string, count: number, difficulty: Gener
     instructions: [
       'You create accurate study assessments using only the supplied source material.',
       'Do not invent facts that are not supported by the source.',
-      'Create useful multiple-choice questions with four distinct answer choices.',
+      'Create useful multiple-choice questions with exactly four distinct answer choices.',
       'Wrong answers should be plausible but clearly incorrect according to the source.',
       'The explanation must briefly explain why the correct answer is correct and clarify the likely misconception behind a wrong choice.',
       'Avoid trivia unless it is central to the lesson. Favor comprehension, application, and important definitions.'
@@ -164,20 +164,22 @@ async function generateAssessment(text: string, count: number, difficulty: Gener
   };
 
   const questions = (parsed.questions || [])
-    .filter((question) => question.prompt && Array.isArray(question.options) && question.options.length >= 2)
+    .filter((question) =>
+      Boolean(question.prompt) &&
+      Array.isArray(question.options) &&
+      question.options.length >= 4 &&
+      Number.isInteger(question.correctIndex) &&
+      Number(question.correctIndex) >= 0 &&
+      Number(question.correctIndex) <= 3
+    )
     .slice(0, count)
-    .map((question) => {
-      const options = question.options!.slice(0, 4).map((option) => String(option).trim());
-      while (options.length < 4) options.push(`Review option ${options.length + 1}`);
-      const requestedIndex = Number.isInteger(question.correctIndex) ? Number(question.correctIndex) : 0;
-      return {
-        id: crypto.randomUUID(),
-        prompt: String(question.prompt).trim(),
-        options,
-        correctIndex: Math.min(3, Math.max(0, requestedIndex)),
-        explanation: String(question.explanation || 'Review the source material for the reasoning behind this answer.').trim()
-      } satisfies ParsedQuestion;
-    });
+    .map((question) => ({
+      id: crypto.randomUUID(),
+      prompt: String(question.prompt).trim(),
+      options: question.options!.slice(0, 4).map((option) => String(option).trim()),
+      correctIndex: Number(question.correctIndex),
+      explanation: String(question.explanation || 'Review the source material for the reasoning behind this answer.').trim()
+    } satisfies ParsedQuestion));
 
   if (questions.length === 0) throw new Error('AI generation did not produce usable questions.');
   return {
