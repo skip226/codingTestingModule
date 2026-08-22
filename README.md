@@ -31,6 +31,10 @@ TestForge is a modern virtual testing environment that converts uploaded lesson 
 - Visualize the last eight completed scores chronologically
 - Compare grades across classes
 - Surface strongest topics and weakest study targets
+- Build a ranked **Study Next** queue for the selected class
+- Assemble persistent adaptive practice tests from the user's question bank
+- Weight adaptive sessions toward weak and recently missed topics while retaining stronger material
+- Recalculate the personalized study plan after every graded attempt
 - Store per-question answer results for completed tests
 
 ## Data model
@@ -42,6 +46,8 @@ TestForge uses a normalized cloud data model:
 The SQL schema lives at `supabase/schema.sql`. Every study-data table includes a user owner and has Row Level Security enabled. Test rows can point back to their originating lesson source, which allows one source file to support many different generated assessments.
 
 Questions also include a `topic` field. Newly AI-generated questions receive concise concept labels automatically; extracted or older questions default to **General** unless the user edits the topic before saving.
+
+Adaptive practice tests use the same `tests`, `questions`, `attempts`, and `attempt_answers` records as regular assessments. They are therefore persistent, reviewable, and automatically become new evidence for future personalization.
 
 ## Performance analytics
 
@@ -57,6 +63,23 @@ The Analytics view calculates performance directly from saved tests and attempts
 - **Best next study target** highlights the lowest-accuracy concept.
 
 Completed-test history rows are interactive. Opening one shows the original question, the student's selected answer, the correct answer, the saved explanation, and the question topic. The review also summarizes which topics were missed on that specific attempt so the user has an immediate study target. Reviews are read-only and do not create another attempt unless the user explicitly chooses **Retake test**.
+
+## Adaptive testing and Study Next
+
+The **Study Plan** view turns the saved analytics into a class-specific practice queue. Each topic is ranked using its current accuracy, how much evidence exists for the topic, and how many reusable questions are available in the question bank.
+
+Topic states are presented as:
+
+- **Focus now** for concepts below 70% accuracy.
+- **Reinforce** for concepts from 70% through 84%.
+- **Maintain** for concepts at 85% or better.
+- **Build baseline** when the student has questions available but has not answered enough material in that topic yet.
+
+When **Start adaptive practice** is selected, TestForge assembles a new persistent test from the selected class. The first adaptive version uses the existing question bank rather than making another AI request. Roughly 70% of the session emphasizes weak, unseen, or recently missed questions and roughly 30% keeps stronger material in rotation for retention. Duplicate prompts are removed from the candidate bank.
+
+Adaptive tests are saved to Supabase before they begin, then run through the normal TestForge grading environment. Once graded, the new attempt immediately changes topic accuracy and the next Study Next ranking. This creates a closed feedback loop without requiring a separate adaptive-session database.
+
+The current adaptive engine reuses existing questions. A later enhancement can ask AI to create fresh weak-topic variants from saved lesson sources when the student needs novel practice rather than repetition.
 
 ## Lesson library
 
@@ -130,7 +153,7 @@ Users can create an account, sign in, and sign out from the TestForge interface.
 
 ## Cloud persistence behavior
 
-Creating a class writes directly to the authenticated user's `classes` records. Saving an imported/generated assessment preserves the source file, creates a lesson-source record, creates the linked test, and stores normalized question rows including topic labels. Grading a test writes the attempt summary plus one `attempt_answers` row for every question.
+Creating a class writes directly to the authenticated user's `classes` records. Saving an imported/generated assessment preserves the source file, creates a lesson-source record, creates the linked test, and stores normalized question rows including topic labels. Grading a test writes the attempt summary plus one `attempt_answers` row for every question. Adaptive practice uses those same tables and requires no additional database migration beyond the current schema.
 
 ## AI generation behavior
 
