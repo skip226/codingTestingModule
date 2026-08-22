@@ -20,6 +20,7 @@ export type RecentScore = {
   attemptId: string;
   title: string;
   classId: string;
+  className: string;
   score: number;
   completedAt: string;
 };
@@ -47,6 +48,7 @@ export function buildPerformanceAnalytics(
   attempts: Attempt[]
 ): PerformanceAnalytics {
   const testById = new Map(tests.map((test) => [test.id, test]));
+  const classById = new Map(classes.map((classSection) => [classSection.id, classSection.name]));
   const earned = attempts.reduce((sum, attempt) => sum + attempt.score, 0);
   const possible = attempts.reduce((sum, attempt) => sum + attempt.total, 0);
   const attemptPercentages = attempts.map((attempt) => percent(attempt.score, attempt.total));
@@ -109,6 +111,7 @@ export function buildPerformanceAnalytics(
       attemptId: attempt.id,
       title: attempt.title,
       classId: attempt.classId,
+      className: classById.get(attempt.classId) || 'Class',
       score: percent(attempt.score, attempt.total),
       completedAt: attempt.completedAt
     }))
