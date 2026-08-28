@@ -109,24 +109,58 @@ fun TestForgeLiteApp(context: Context) {
     var screen by remember { mutableStateOf(Screen.HOME) }
     var activeTest by remember { mutableStateOf<TestItem?>(null) }
     var showAddClass by remember { mutableStateOf(false) }
-    var importMessage by remember { mutableStateOf<String?>(null) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
 
     val overall = if (attempts.isEmpty()) null else attempts.map { it.score }.average().roundToInt()
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                val text = readImportDocument(context, uri)
+                parseStructuredTest(text, selectedClass)
+            }.onSuccess { imported ->
+                tests = tests + imported
+                store.saveTests(tests)
+                statusMessage = "Imported ${imported.title} (${imported.questions.size} questions)."
+            }.onFailure {
+                statusMessage = it.message ?: "Import failed."
+            }
+        }
+    }
+
+    val backupWriter = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                val json = createBackupJson(context)
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(json.toByteArray(Charsets.UTF_8))
+                } ?: error("Could not create backup file.")
+            }.onSuccess {
+                statusMessage = "Backup saved. Keep that JSON file somewhere safe."
+            }.onFailure {
+                statusMessage = it.message ?: "Backup failed."
+            }
+        }
+    }
+
+    val backupReader = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
             runCatching {
                 val text = context.contentResolver.openInputStream(uri)
                     ?.bufferedReader()
                     ?.use { it.readText() }
-                    ?: error("Could not read that file.")
-                parseStructuredTest(text, selectedClass)
-            }.onSuccess { imported ->
-                tests = tests + imported
-                store.saveTests(tests)
-                importMessage = "Imported ${imported.title} (${imported.questions.size} questions)."
+                    ?: error("Could not read backup file.")
+                restoreBackupJson(context, text)
+            }.onSuccess { restored ->
+                classes = restored.classes
+                tests = restored.tests
+                attempts = restored.attempts
+                selectedClass = classes.firstOrNull() ?: "General"
+                statusMessage = "Backup restored: ${tests.size} tests and ${attempts.size} completed attempts."
             }.onFailure {
-                importMessage = it.message ?: "Import failed."
+                statusMessage = it.message ?: "Restore failed."
             }
         }
     }
@@ -205,10 +239,22 @@ fun TestForgeLiteApp(context: Context) {
                         classes = classes,
                         selectedClass = selectedClass,
                         tests = tests,
-                        importMessage = importMessage,
+                        statusMessage = statusMessage,
                         onSelectClass = { selectedClass = it },
                         onAddClass = { showAddClass = true },
-                        onImport = { filePicker.launch(arrayOf("text/plain", "text/markdown", "application/octet-stream")) },
+                        onImport = {
+                            importPicker.launch(
+                                arrayOf(
+                                    "application/pdf",
+                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    "text/plain",
+                                    "text/markdown",
+                                    "application/octet-stream"
+                                )
+                            )
+                        },
+                        onBackup = { backupWriter.launch("testforge-lite-backup.json") },
+                        onRestore = { backupReader.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
                         onTest = {
                             activeTest = it
                             screen = Screen.TEST
@@ -225,10 +271,12 @@ fun HomeScreen(
     classes: List<String>,
     selectedClass: String,
     tests: List<TestItem>,
-    importMessage: String?,
+    statusMessage: String?,
     onSelectClass: (String) -> Unit,
     onAddClass: () -> Unit,
     onImport: () -> Unit,
+    onBackup: () -> Unit,
+    onRestore: () -> Unit,
     onTest: (TestItem) -> Unit
 ) {
     val filtered = tests.filter { it.className == selectedClass }
@@ -239,23 +287,36 @@ fun HomeScreen(
         item {
             Text("Your Classes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                classes.take(3).forEach { className ->
-                    FilterChip(
-                        selected = selectedClass == className,
-                        onClick = { onSelectClass(className) },
-                        label = { Text(className) }
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                classes.chunked(3).forEach { rowClasses ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rowClasses.forEach { className ->
+                            FilterChip(
+                                selected = selectedClass == className,
+                                onClick = { onSelectClass(className) },
+                                label = { Text(className) }
+                            )
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onAddClass) { Text("+ Class") }
-                Button(onClick = onImport) { Text("Import .txt/.md Test") }
+                Button(onClick = onImport) { Text("Import Test") }
             }
-            if (importMessage != null) {
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onBackup) { Text("Backup") }
+                OutlinedButton(onClick = onRestore) { Text("Restore") }
+            }
+            Text(
+                "Imports: PDF, DOCX, TXT, MD. PDFs must contain selectable text.",
+                style = MaterialTheme.typography.labelSmall
+            )
+            if (statusMessage != null) {
                 Spacer(Modifier.height(8.dp))
-                Text(importMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                Text(statusMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
             }
             Spacer(Modifier.height(14.dp))
             Text("$selectedClass Tests", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -267,7 +328,7 @@ fun HomeScreen(
                     Column(Modifier.padding(18.dp)) {
                         Text("No tests yet", fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(6.dp))
-                        Text("Import a structured text or Markdown test. A sample test is included under General on first install.")
+                        Text("Import a structured test file. A sample test is included under General on first install.")
                     }
                 }
             }
@@ -314,7 +375,10 @@ fun HistoryScreen(attempts: List<Attempt>) {
                     Column(Modifier.weight(1f)) {
                         Text(attempt.title, fontWeight = FontWeight.Bold)
                         Text(attempt.className, style = MaterialTheme.typography.bodySmall)
-                        Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(attempt.timestamp)), style = MaterialTheme.typography.labelSmall)
+                        Text(
+                            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(attempt.timestamp)),
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text("${attempt.score}%", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
